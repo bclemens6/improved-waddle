@@ -1,0 +1,83 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb  2 11:27:36 2023
+
+@author: benja
+"""
+
+#import the packages needed to run this script
+import pandas as pd
+import numpy as np
+
+#Pull in the Savant data I've downloaded, which is batted ball data from 2019-2022, and fix the data types
+#for further processing. One note: to make this work over multiple seasons, I pre-modified my Savant data
+#with an extra column called batter_sesaon, which is MLBAMID, a space, and then game year, for every batted ball.
+#I did this in SQL in downloading the data, you'd have to do it before putting it into this script sometime.
+SheetOne=pd.read_csv('UnifiedSavantFeed.csv',dtype=object, low_memory=True)
+SheetOne['launch_speed']=SheetOne['launch_speed'].astype(float)
+SheetOne['woba_denom']=SheetOne['woba_denom'].astype(float)
+SheetOne['launch_angle']=SheetOne['launch_angle'].astype(float)
+SheetOne=SheetOne.assign(Denom = lambda x: np.where((x['launch_speed']>0) & (x['woba_denom']==1),1,0))
+
+#The Savant data was too big for one spreadsheet, so you can pull in a second sheet as well
+SheetTwo=pd.read_csv('UnifiedSavantFeed2.csv',dtype=object, low_memory=True)
+SheetTwo['launch_speed']=SheetTwo['launch_speed'].astype(float)
+SheetTwo['woba_denom']=SheetTwo['woba_denom'].astype(float)
+SheetTwo['launch_angle']=SheetTwo['launch_angle'].astype(float)
+SheetTwo=SheetTwo.assign(Denom = lambda x: np.where((x['launch_speed']>0) & (x['woba_denom']==1),1,0))
+
+#Merge the two input sheets
+BB2022=pd.concat([SheetOne,SheetTwo])
+
+#A function to calculate a weighted average
+def grouped_weighted_avg(values, weights, by):
+    return (values*weights).groupby(by).sum()/weights.groupby(by).sum()
+
+
+#calculate the weighted average EV for each batter-season and append it to a new dataframe
+EVAvg=grouped_weighted_avg(values=BB2022.launch_speed,weights=BB2022.Denom,by=BB2022.batter_season)
+EVAvg=pd.DataFrame(EVAvg)
+EVAvg.columns=['AvgEV']
+
+#calculate the maximum EV for each batter-season and append it to a new dataframe
+MaxEV=BB2022.groupby('batter_season')['launch_speed'].max()
+MaxEV=pd.DataFrame(MaxEV)
+MaxEV.columns=['MaxEV']
+
+#calculate EV95 for each batter-season and append it to a new dataframe
+EV95=BB2022.groupby('batter_season')['launch_speed'].quantile(.95)
+EV95=pd.DataFrame(EV95)
+EV95.columns=['Pct95']
+
+#create a list of batter-seasons for merging purposes
+Batters=BB2022.groupby('batter_season')['batter_season'].first()
+Batters=pd.DataFrame(Batters)
+Batters.columns=['Batter Season']
+
+#Record the number of batted balls in each batter-season for further processing
+BBCount=BB2022.groupby('batter_season')['Denom'].apply(lambda x: x[x == 1].count())
+BBCount=pd.DataFrame(BBCount)
+BBCount.columns=['Count']
+
+#measure the standard deviation of launch angle in each batter-season
+LASD=BB2022.groupby('batter_season').agg({'launch_angle':'std'})
+LASD=pd.DataFrame(LASD)
+LASD.columns=['LASD']
+
+#Merge all of the above calculations into one dataframe
+EVData=pd.merge(Batters,EVAvg,on='batter_season')
+EVData=pd.merge(EVData,MaxEV,on='batter_season')
+EVData=pd.merge(EVData,EV95,on='batter_season')
+EVData=pd.merge(EVData,LASD,on='batter_season')
+EVData=pd.merge(EVData,BBCount,on='batter_season')
+
+
+
+#Line to do auto trimming of low count hitters
+EVData=EVData[EVData['Count']>99]
+
+#Write the dataframe to a CSV. Input your own destination file rather than mine.
+EVData.to_csv(r'C:\Users\benja\Documents\Python Scripts\EVDataTotal.csv',index=False, header=True)
+
+#this is just in here so I get an output after my code runs, personal preference only
+print(Batters)
